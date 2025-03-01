@@ -142,30 +142,15 @@ def main():
             replay_output=opts.replay_output)
         droidmaster.start()
     else:
-        droidbot = DroidBot(
-            app_path=opts.apk_path,
-            device_serial=opts.device_serial,
-            is_emulator=opts.is_emulator,
-            output_dir=opts.output_dir,
-            # env_policy=opts.env_policy,
-            env_policy=env_manager.POLICY_NONE,
-            policy_name=opts.input_policy,
-            random_input=opts.random_input,
-            script_path=opts.script_path,
-            event_interval=opts.interval,
-            timeout=opts.timeout,
-            event_count=opts.count,
-            cv_mode=opts.cv_mode,
-            debug_mode=opts.debug_mode,
-            keep_app=opts.keep_app,
-            keep_env=opts.keep_env,
-            profiling_method=opts.profiling_method,
-            grant_perm=opts.grant_perm,
-            enable_accessibility_hard=opts.enable_accessibility_hard,
-            master=opts.master,
-            humanoid=opts.humanoid,
-            ignore_ad=opts.ignore_ad,
-            replay_output=opts.replay_output)
+        droidbot = DroidBot(app_path=opts.apk_path, device_serial=opts.device_serial, is_emulator=opts.is_emulator,
+                            output_dir=opts.output_dir, env_policy=env_manager.POLICY_NONE,
+                            policy_name=opts.input_policy, random_input=opts.random_input, script_path=opts.script_path,
+                            event_count=opts.count, event_interval=opts.interval, timeout=opts.timeout,
+                            keep_app=opts.keep_app, keep_env=opts.keep_env, cv_mode=opts.cv_mode,
+                            debug_mode=opts.debug_mode, profiling_method=opts.profiling_method,
+                            grant_perm=opts.grant_perm, enable_accessibility_hard=opts.enable_accessibility_hard,
+                            master=opts.master, humanoid=opts.humanoid, ignore_ad=opts.ignore_ad,
+                            replay_output=opts.replay_output)
         droidbot.start()
     return
 

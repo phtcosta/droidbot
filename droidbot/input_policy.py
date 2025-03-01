@@ -34,6 +34,7 @@ POLICY_MONKEY = "monkey"
 POLICY_NONE = "none"
 POLICY_MEMORY_GUIDED = "memory_guided"  # implemented in input_policy2
 POLICY_LLM_GUIDED = "llm_guided"  # implemented in input_policy3
+POLICY_RVANDROID="rvandroid"
 
 
 class InputInterruptedException(Exception):

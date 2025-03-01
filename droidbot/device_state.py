@@ -39,16 +39,35 @@ class DeviceState(object):
         return self.foreground_activity.split('.')[-1]
 
     def to_dict(self):
-        state = {'tag': self.tag,
-                 'state_str': self.state_str,
-                 'state_str_content_free': self.structure_str,
-                 'foreground_activity': self.foreground_activity,
-                 'activity_stack': self.activity_stack,
-                 'background_services': self.background_services,
-                 'width': self.width,
-                 'height': self.height,
-                 'views': self.views}
-        return state
+        """
+        Convert device state to a dictionary format suitable for RV-Android
+        :return: Dictionary representation of state
+        """
+        # Basic state info
+        state_dict = {
+            "activity": self.foreground_activity,
+            # "package_name": self.,
+            "view_tree": self.view_tree,
+            "screen_bounds": [0, 0, self.width, self.height],
+            "state_str": self.state_str,
+            "structure_str": self.structure_str
+        }
+
+        # Add window stack information if available
+        if hasattr(self, "window_stack") and self.window_stack:
+            state_dict["stack"] = self.window_stack
+
+        # Include foreground views
+        if self.views:
+            views_dict = []
+            for view in self.views:
+                if hasattr(view, "to_dict"):
+                    views_dict.append(view.to_dict())
+                else:
+                    views_dict.append(view)# TODO .__dict__)
+            state_dict["views"] = views_dict
+
+        return state_dict
 
     def to_json(self):
         import json

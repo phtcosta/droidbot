@@ -22,29 +22,11 @@ class DroidBot(object):
     # this is a single instance class
     instance = None
 
-    def __init__(self,
-                 app_path=None,
-                 device_serial=None,
-                 is_emulator=False,
-                 output_dir=None,
-                 env_policy=None,
-                 policy_name=None,
-                 random_input=False,
-                 script_path=None,
-                 event_count=None,
-                 event_interval=None,
-                 timeout=None,
-                 keep_app=None,
-                 keep_env=False,
-                 cv_mode=False,
-                 debug_mode=False,
-                 profiling_method=None,
-                 grant_perm=False,
-                 enable_accessibility_hard=False,
-                 master=None,
-                 humanoid=None,
-                 ignore_ad=False,
-                 replay_output=None):
+    def __init__(self, app_path=None, device_serial=None, is_emulator=False, output_dir=None, env_policy=None,
+                 policy_name=None, random_input=False, script_path=None, event_count=None, event_interval=None,
+                 timeout=None, keep_app=None, keep_env=False, cv_mode=False, debug_mode=False, profiling_method=None,
+                 grant_perm=False, enable_accessibility_hard=False, master=None, humanoid=None, ignore_ad=False,
+                 replay_output=None, rvandroid_url="http://localhost:5000/api/get_actions"):
         """
         initiate droidbot with configurations
         :return:
@@ -80,7 +62,7 @@ class DroidBot(object):
         self.humanoid = humanoid
         self.ignore_ad = ignore_ad
         self.replay_output = replay_output
-
+        self.rvandroid_url = rvandroid_url
         self.enabled = True
 
         try:
@@ -184,15 +166,15 @@ class DroidBot(object):
             self.droidbox.stop()
         if self.device:
             self.device.disconnect()
-        if not self.keep_env:
-            self.device.tear_down()
-        if not self.keep_app:
-            self.device.uninstall_app(self.app)
-        if hasattr(self.input_manager.policy, "master") and \
-           self.input_manager.policy.master:
-            import xmlrpc.client
-            proxy = xmlrpc.client.ServerProxy(self.input_manager.policy.master)
-            proxy.stop_worker(self.device.serial)
+            if not self.keep_env:
+                self.device.tear_down()
+            if not self.keep_app:
+                self.device.uninstall_app(self.app)
+        # if hasattr(self.input_manager.policy, "master") and \
+        #    self.input_manager.policy.master:
+        #     import xmlrpc.client
+        #     proxy = xmlrpc.client.ServerProxy(self.input_manager.policy.master)
+        #     proxy.stop_worker(self.device.serial)
 
 
 class DroidBotException(Exception):

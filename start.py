@@ -44,7 +44,14 @@ def parse_args():
                                  input_policy.POLICY_GREEDY_DFS,
                                  input_policy.POLICY_NAIVE_BFS,
                                  input_policy.POLICY_GREEDY_BFS,
+                                 input_policy.POLICY_RVANDROID
                              ))
+
+    parser.add_argument(
+        "--rvandroid_url",
+        dest="rvandroid_url",
+        default="http://localhost:5000/api/get_actions",
+        help="URL of the RV-Android server")
 
     # for distributed DroidBot
     parser.add_argument("-distributed", action="store", dest="distributed", choices=["master", "worker"],
@@ -165,7 +172,9 @@ def main():
             master=opts.master,
             humanoid=opts.humanoid,
             ignore_ad=opts.ignore_ad,
-            replay_output=opts.replay_output)
+            replay_output=opts.replay_output,
+            rvandroid_url=opts.rvandroid_url
+        )
         droidbot.start()
     return
 
