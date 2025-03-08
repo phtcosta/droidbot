@@ -128,11 +128,18 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
         :param action: Action from RV-Android
         :return: DroidBot input event
         """
+        self.logger.info(f"Converting to droidbot event: {action}")
+        
         action_type = action.get("action_type", "").lower()
         target = action.get("target", "")
-        params = action.get("params", {})
+        params = action.get("params", {})      
+        
+        print(f"action_type={action_type}")    
+        print(f"target={target}")    
+        print(f"params={params}")          
 
         # Track action for history
+        # TODO melhorar descrição
         action_desc = f"{action_type} on {target}"
         if len(self.action_history) >= 20:
             self.action_history.pop(0)
