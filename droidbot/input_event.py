@@ -744,6 +744,98 @@ class SetTextEvent(UIEvent):
         return [self.view] if self.view else []
 
 
+# droidbot/input_event.py
+# Add this to the existing input_event.py file
+
+import logging
+from typing import List, Optional
+
+# droidbot/input_event.py
+# Add this to the existing input_event.py file
+
+import logging
+from typing import List, Optional
+
+# droidbot/input_event.py
+# Add this to the existing input_event.py file
+
+import logging
+from typing import List, Optional
+
+class CompoundEvent(UIEvent):
+    """
+    A compound event that executes multiple UI events in sequence.
+    This event is robust against UI changes where an element may no longer exist
+    after a previous action in the sequence.
+    """
+    
+    def __init__(self, events=None):
+        """
+        Initialize a CompoundEvent
+        :param events: a list of InputEvent objects to be executed in sequence
+        """
+        self.events = events if events else []
+        self.event_type = 'compound'
+        super(CompoundEvent, self).__init__()
+        self.logger = logging.getLogger('CompoundEvent')
+
+    def send(self, device, app):
+        """
+        Send the compound event to the device
+        :param device: Device instance
+        :param app: App instance
+        :return: True if all events sent successfully, False otherwise
+        """
+        if not self.events:
+            self.logger.warning("No events to send in CompoundEvent")
+            return True
+
+        self.logger.info(f"Sending CompoundEvent with {len(self.events)} events")
+        success_count = 0
+        
+        for i, event in enumerate(self.events):
+            try:
+                self.logger.info(f"Sending event {i+1}/{len(self.events)}: {event}")
+                
+                # Check if app is still in foreground before sending event
+                if not device.is_foreground(app):
+                    self.logger.warning(f"App is no longer in foreground, stopping CompoundEvent execution after {success_count} events")
+                    break
+                
+                # Send the event
+                device.send_event(event)
+                success_count += 1
+                
+                # Give the UI time to update
+                import time
+                time.sleep(0.5)
+                
+            except Exception as e:
+                self.logger.error(f"Error sending event {i+1}: {e}")
+                # Continue with next event despite error
+        
+        self.logger.info(f"CompoundEvent execution completed: {success_count}/{len(self.events)} events successful")
+        return success_count > 0  # Return True if at least one event was successful
+
+    def to_dict(self):
+        """
+        Convert the CompoundEvent to a dict
+        :return: dict representation of the event
+        """
+        events_dict = []
+        for event in self.events:
+            if hasattr(event, 'to_dict'):
+                events_dict.append(event.to_dict())
+        
+        return {
+            "event_type": self.event_type,
+            "events": events_dict
+        }
+
+    def __str__(self):
+        return f"CompoundEvent(events({len(self.events)})=[{', '.join(str(event) for event in self.events)}])"
+
+
 class IntentEvent(InputEvent):
     """
     An event describing an intent

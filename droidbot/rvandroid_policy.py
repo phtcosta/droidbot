@@ -2,12 +2,13 @@
 
 import logging
 import json
+import traceback
 import requests
 import time
 from typing import Optional, Dict, List, Any
 
 from .input_policy import UtgBasedInputPolicy, UtgGreedySearchPolicy, POLICY_GREEDY_DFS
-from droidbot.input_event import KeyEvent, IntentEvent, TouchEvent, LongTouchEvent, ScrollEvent, SetTextEvent
+from droidbot.input_event import KeyEvent, IntentEvent, TouchEvent, LongTouchEvent, ScrollEvent, SetTextEvent, CompoundEvent
 from droidbot.utg import UTG
 
 
@@ -16,9 +17,6 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
     A DroidBot input policy that communicates with RV-Android server
     to get next actions based on current app state.
     """
-
-    # def generate_event_based_on_utg(self):
-    #     pass
 
     def __init__(self, device, app, random_input, server_url="http://localhost:5000/api/get_actions"):
         super(RVAndroidPolicy, self).__init__(device, app, random_input)
@@ -36,14 +34,10 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
     def generate_event(self):
         """
         Generate the next input event based on suggestions from RV-Android server
-        :return: The next input event
+        :return: The next input event (can be a CompoundEvent with multiple events)
         """
         # Get current device state
         current_state = self.device.get_current_state()
-        # current_state = self.current_state
-        # if current_state is None:
-        #     current_state = self.device.get_current_state()
-        #     self.current_state = current_state
 
         # Check if the app is still running
         if not self.device.is_foreground(self.app):
@@ -57,7 +51,27 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
             actions = self._get_actions_from_server(state_data)
             if actions and len(actions) > 0:
                 self.consecutive_errors = 0
-                return self._convert_to_droidbot_event(actions[0])
+                
+                # If there are multiple actions, create a CompoundEvent
+                if len(actions) > 1:
+                    self.logger.info(f"Creating CompoundEvent with {len(actions)} actions")
+                    events = []
+                    for action in actions:
+                        try:
+                            event = self._convert_to_droidbot_event(action)
+                            events.append(event)
+                        except Exception as e:
+                            self.logger.error(f"Error converting action to event: {e}")
+                    
+                    # Update action history with compound action
+                    action_desc = f"Compound action with {len(events)} events"
+                    self._update_action_history(action_desc)
+                    
+                    return CompoundEvent(events=events)
+                else:
+                    # Handle single action case
+                    event = self._convert_to_droidbot_event(actions[0])
+                    return event
 
             # If no valid actions, use fallback policy
             self.logger.warning("No valid actions from server, using fallback policy")
@@ -65,6 +79,7 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
 
         except Exception as e:
             self.logger.error(f"Error getting actions from server: {e}")
+            traceback.print_exc()
             self.consecutive_errors += 1
 
             # If too many consecutive errors, use fallback policy
@@ -90,7 +105,7 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
 
         return state_dict
 
-    def _get_actions_from_server(self, state_data):
+    def _get_actions_from_server(self, state_data, timeout=30):
         """
         Send state data to RV-Android server and get suggested actions
         :param state_data: State data for RV-Android
@@ -102,7 +117,7 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
                 self.server_url,
                 json=state_data,
                 headers={"Content-Type": "application/json"},
-                timeout=30
+                timeout=timeout
             )
             print(f"<<<<<<<< RESPONSE: {response}")
             if response.status_code != 200:
@@ -140,11 +155,8 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
         print(f"params={params}")          
 
         # Track action for history
-        # TODO melhorar descrição
         action_desc = f"{action_type} on {target}"
-        if len(self.action_history) >= 20:
-            self.action_history.pop(0)
-        self.action_history.append(action_desc)
+        self._update_action_history(action_desc)
 
         try:
             # Handle different action types
@@ -153,8 +165,7 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
             elif action_type == "long_click":
                 return LongTouchEvent(view=target)
             elif action_type in ["scroll_up", "scroll_down", "scroll_left", "scroll_right", "scroll"]:
-                direction = action_type.replace("scroll_", "") if "_" in action_type else params.get("direction",
-                                                                                                     "DOWN")
+                direction = action_type.replace("scroll_", "") if "_" in action_type else params.get("direction", "DOWN")
                 return ScrollEvent(view=target, direction=direction.upper())
             elif action_type == "set_text":
                 text = params.get("text", "")
@@ -167,8 +178,20 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
                 return KeyEvent(name="BACK")
         except Exception as e:
             self.logger.error(f"Error converting action to event: {e}")
-            return KeyEvent(name="BACK")
+            traceback.print_exc()
+            return self.fallback_policy.generate_event()
+            # return KeyEvent(name="BACK")
+    
+    def _update_action_history(self, action_desc):
+        """
+        Update the action history with a new action description
+        :param action_desc: Description of the action
+        """
+        if len(self.action_history) >= 20:
+            self.action_history.pop(0)
+        self.action_history.append(action_desc)
 
     def handle_utg_event(self, event):
         """Callback for UTG events"""
         self.current_state = None  # Reset current state
+        

@@ -1,14 +1,11 @@
 import json
 import shutil
-# from ollama import Client
 from droidbot.device import Device
 from droidbot.app import App
 from droidbot.device_state import DeviceState
 import os
 
 from droidbot.rvandroid_policy import RVAndroidPolicy
-
-# https://github.com/ollama/ollama-python
 
 HOST = "http://localhost:11434"
 MODEL = "llama3.2:1b"
@@ -24,41 +21,47 @@ def execute(app_path, output_dir=None):
     try:
         device.set_up()
         device.connect()
+        
+        # Enable show touches for better visualization
+        device.adb.shell("settings put system show_touches 1")
+        print("Show touches enabled")
+        
         device.install_app(app)
         device.start_app(app)
         while (True):
-            input("pressione ENTER para continuar ...")
+            input("Press ENTER to continue...")
             state = device.get_current_state()
             print(f"state_str={state.state_str}")
             print(f"structure_str={state.structure_str}")
+            
             event = policy.generate_event()
-            print(event)
-
+            print(f"Generated event: {event}")
+            # event.send(device)
+            
+            # Send the event using device.send_event which works with all event types
+            # device.send_event(event)
+            
+            # Optional: Take a screenshot after execution
+            # img_path = device.take_screenshot()
+            # if img_path:
+            #     print(f"Screenshot saved at: {img_path}")
+            
+            # Optional: Save state information for debugging
             # prefix = f"{cont:03}"
             # cont += 1
-            #
-            # message = create_message(state)
-            # state_file = os.path.join(out_dir, prefix + ".state")
+            # state_file = os.path.join(output_dir, prefix + ".state")
             # with open(state_file, "w") as arquivo:
-            #     json.dump(message, arquivo, indent=3)
-            #
-            # img_file = os.path.join(out_dir, prefix + ".png")
-            # img_path = device.take_screenshot()
-            # print(f"img_path={img_path}")
-            # shutil.move(img_path, img_file)
+            #     json.dump(create_message(state), arquivo, indent=3)
+            
     except KeyboardInterrupt:
-        # self.logger.info("Keyboard interrupt.")
-        pass
-    except Exception:
+        print("Keyboard interrupt received, stopping execution.")
+    except Exception as e:
         import traceback
         traceback.print_exc()
-        # self.stop()
-        # sys.exit(-1)
-        #
-        # self.stop()
-        # self.logger.info("DroidBot Stopped")
-
-    device.disconnect()
+        print(f"Error during execution: {e}")
+    finally:
+        device.disconnect()
+        print("Device disconnected.")
 
 
 def create_device(device_serial="emulator-5554",
