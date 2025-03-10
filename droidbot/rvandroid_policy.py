@@ -39,10 +39,11 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
         :return: The next input event
         """
         # Get current device state
-        current_state = self.current_state
-        if current_state is None:
-            current_state = self.device.get_current_state()
-            self.current_state = current_state
+        current_state = self.device.get_current_state()
+        # current_state = self.current_state
+        # if current_state is None:
+        #     current_state = self.device.get_current_state()
+        #     self.current_state = current_state
 
         # Check if the app is still running
         if not self.device.is_foreground(self.app):

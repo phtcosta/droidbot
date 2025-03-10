@@ -29,6 +29,8 @@ def execute(app_path, output_dir=None):
         while (True):
             input("pressione ENTER para continuar ...")
             state = device.get_current_state()
+            print(f"state_str={state.state_str}")
+            print(f"structure_str={state.structure_str}")
             event = policy.generate_event()
             print(event)
 
