@@ -176,12 +176,12 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
                 x, y = int(parts[0]), int(parts[1])
         
         try:
-            # For key events, no coordinates needed
+            # For key events, não precisamos de coordenadas
             if action_type == "key_event":
                 key_name = params.get("name", "BACK")
                 return KeyEvent(name=key_name)
                 
-            # If we have coordinates, use them directly
+            # Se temos coordenadas, usá-las diretamente
             if x is not None and y is not None:
                 if action_type == "click":
                     return TouchEvent(x=x, y=y)
@@ -194,7 +194,7 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
                     text = params.get("text", "")
                     return SetTextEvent(x=x, y=y, text=text)
             
-            # If we have a resource ID (but no coordinates), try to create a view-based event
+            # Se temos um resource ID (mas sem coordenadas), buscar a view
             elif ":" in target and not target.isdigit():
                 # Look up the view in the current state
                 current_state = self.device.get_current_state()
@@ -212,7 +212,7 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
                         text = params.get("text", "")
                         return SetTextEvent(view=view, text=text)
                 else:
-                    # If view not found by resource ID, fall back to center of screen
+                    # Se a view não foi encontrada, usar centro da tela (último recurso)
                     self.logger.warning(f"View with resource_id {target} not found, using center of screen")
                     screen_width = self.device.get_width()
                     screen_height = self.device.get_height()
@@ -227,7 +227,7 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
                         direction = action_type.replace("scroll_", "") if "_" in action_type else params.get("direction", "DOWN")
                         return ScrollEvent(x=center_x, y=center_y, direction=direction.upper())
             
-            # Last resort: use center of screen
+            # Último recurso: usar centro da tela
             else:
                 self.logger.warning(f"No coordinates or valid target for {action_type}, using center of screen")
                 screen_width = self.device.get_width()
@@ -246,7 +246,7 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
                     text = params.get("text", "")
                     return SetTextEvent(x=center_x, y=center_y, text=text)
                     
-            # If nothing else worked
+            # Se nada funcionou
             self.logger.warning(f"Could not create event for action: {action}")
             return KeyEvent(name="BACK")
         except Exception as e:
