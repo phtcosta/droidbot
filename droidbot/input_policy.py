@@ -4,6 +4,9 @@ import logging
 import random
 from abc import abstractmethod
 
+from droidbot.app import App
+from droidbot.device import Device
+
 from .input_event import InputEvent, KeyEvent, IntentEvent, TouchEvent, ManualEvent, SetTextEvent, KillAppEvent
 from .utg import UTG
 
@@ -47,7 +50,7 @@ class InputPolicy(object):
     It should call AppEventManager.send_event method continuously
     """
 
-    def __init__(self, device, app):
+    def __init__(self, device: Device, app: App):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.device = device
         self.app = app
@@ -118,7 +121,7 @@ class UtgBasedInputPolicy(InputPolicy):
     state-based input policy
     """
 
-    def __init__(self, device, app, random_input):
+    def __init__(self, device: Device, app: App, random_input):
         super(UtgBasedInputPolicy, self).__init__(device, app)
         self.random_input = random_input
         self.script = None

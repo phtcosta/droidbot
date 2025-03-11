@@ -36,7 +36,7 @@ def execute(app_path, output_dir=None):
             
             event = policy.generate_event()
             print(f"Generated event: {event}")
-            # event.send(device)
+            event.send(device)
             
             # Send the event using device.send_event which works with all event types
             # device.send_event(event)

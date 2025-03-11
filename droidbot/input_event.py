@@ -4,6 +4,8 @@ import random
 import time
 from abc import abstractmethod
 
+import droidbot.device_state as device_state_module
+
 from . import utils
 from .intent import Intent
 
@@ -432,13 +434,16 @@ class UIEvent(InputEvent):
             return event_type.get_random_instance(device, app)
 
     @staticmethod
-    def get_xy(x, y, view):
-        if x and y:
+    def get_xy(x=None, y=None, view=None):
+        if x is not None and y is not None:
             return x, y
-        if view:
-            from .device_state import DeviceState
-            return DeviceState.get_view_center(view_dict=view)
-        return x, y
+        if view is not None:
+            # Handle case where view is a string (resource ID)
+            if isinstance(view, str):
+                # This is an error case - we can't extract coordinates from just a resource ID string
+                raise ValueError(f"Cannot extract coordinates from resource ID string: {view}")
+            return device_state_module.get_view_center(view_dict=view)
+        return -1, -1
 
     @staticmethod
     def view_str(state, view):
