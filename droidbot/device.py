@@ -484,7 +484,14 @@ class Device(object):
         :param event: the event to be sent
         :return:
         """
-        event.send(self)
+        if hasattr(event, 'send'):
+            if event.__class__.__name__ == 'CompoundEvent':
+                # For CompoundEvent, we need to pass the current app being tested
+                # This assumes that the device has access to the current app
+                # Or we can just pass None to skip the app check in CompoundEvent.send
+                event.send(self, None)
+            else:
+                event.send(self)
 
     def start_app(self, app):
         """

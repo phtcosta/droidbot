@@ -784,11 +784,11 @@ class CompoundEvent(UIEvent):
         super(CompoundEvent, self).__init__()
         self.logger = logging.getLogger('CompoundEvent')
 
-    def send(self, device, app):
+    def send(self, device, app=None):
         """
         Send the compound event to the device
         :param device: Device instance
-        :param app: App instance
+        :param app: App instance (optional)
         :return: True if all events sent successfully, False otherwise
         """
         if not self.events:
@@ -802,8 +802,8 @@ class CompoundEvent(UIEvent):
             try:
                 self.logger.info(f"Sending event {i+1}/{len(self.events)}: {event}")
                 
-                # Check if app is still in foreground before sending event
-                if not device.is_foreground(app):
+                # Check if app parameter is provided and the app is still in foreground
+                if app and not device.is_foreground(app):
                     self.logger.warning(f"App is no longer in foreground, stopping CompoundEvent execution after {success_count} events")
                     break
                 

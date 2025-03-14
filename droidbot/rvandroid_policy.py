@@ -32,7 +32,6 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
         self.consecutive_errors = 0
         self.max_consecutive_errors = 3
         
-        # TODO apenas para teste ... remover
         # Enable show touches for better visualization
         self.device.adb.shell("settings put system show_touches 1")
 
@@ -58,7 +57,15 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
             if actions and len(actions) > 0:
                 self.consecutive_errors = 0
                 
-                # If there are multiple actions, create a CompoundEvent
+                # Check if there's a metadata flag indicating this is a single action strategy
+                is_single_action = self._check_if_single_action_strategy(actions)
+                
+                # If single action strategy is detected, only use the first action
+                if is_single_action and len(actions) > 1:
+                    self.logger.info(f"Single action strategy detected but received {len(actions)} actions. Using only the first action.")
+                    actions = [actions[0]]
+                
+                # If there are multiple actions and not a single action strategy, create a CompoundEvent
                 if len(actions) > 1:
                     self.logger.info(f"Creating CompoundEvent with {len(actions)} actions")
                     events = []
@@ -66,17 +73,18 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
                         try:
                             event = self._convert_to_droidbot_event(action)
                             events.append(event)
+                            # Update history for each action within compound event
+                            self._update_action_history(self._get_action_description(action))
                         except Exception as e:
                             self.logger.error(f"Error converting action to event: {e}")
-                    
-                    # Update action history with compound action
-                    action_desc = f"Compound action with {len(events)} events"
-                    self._update_action_history(action_desc)
                     
                     return CompoundEvent(events=events)
                 else:
                     # Handle single action case
-                    event = self._convert_to_droidbot_event(actions[0])
+                    action = actions[0]
+                    event = self._convert_to_droidbot_event(action)
+                    # Update action history
+                    self._update_action_history(self._get_action_description(action))
                     return event
 
             # If no valid actions, use fallback policy
@@ -97,6 +105,36 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
             time.sleep(1)
             return KeyEvent(name="BACK")
 
+    def _check_if_single_action_strategy(self, actions):
+        """
+        Check if the actions indicate a single action strategy.
+        This could be indicated by metadata in the action or by checking 
+        specific properties in the actions.
+        
+        :param actions: List of actions from RV-Android
+        :return: True if single action strategy is detected, False otherwise
+        """
+        # Check if any action has metadata indicating single action strategy
+        for action in actions:
+            meta = action.get("meta", {})
+            if meta.get("strategy_type") in ["single_action", "dspy_single_action"]:
+                return True
+                
+            # Also check for other indicators that might be present
+            if action.get("single_action_mode", False):
+                return True
+                
+            # Check if the explanation mentions single action mode
+            explanation = action.get("explanation", "").lower()
+            if "single action" in explanation or "single_action" in explanation:
+                return True
+        
+        # Check if there's only one action and it has a strong indicator it's meant to be alone
+        if len(actions) == 1 and actions[0].get("solo_action", False):
+            return True
+            
+        return False
+
     def _prepare_state_data(self, state):
         """
         Convert DroidBot state to the format expected by RV-Android
@@ -107,7 +145,11 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
         state_dict = state.to_dict()
 
         # Add action history
-        state_dict["action_history"] = self.action_history[-10:] if self.action_history else []
+        state_dict["action_history"] = self.action_history[-20:] if self.action_history else []
+        
+        # Add dynamic transition tracking if applicable
+        if hasattr(self, 'dynamic_transition_tracker'):
+            state_dict["dynamic_transitions"] = self.dynamic_transition_tracker.to_dict()
 
         return state_dict
 
@@ -125,18 +167,37 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
                 headers={"Content-Type": "application/json"},
                 timeout=timeout
             )
-            print(f"<<<<<<<< RESPONSE: {response}")
+            
             if response.status_code != 200:
                 self.logger.error(f"Server returned status {response.status_code}: {response.text}")
                 return []
 
             response_data = response.json()
-            print(f"<<<<<<<< RESPONSE DATA: {response_data}")
+            
             if "actions" not in response_data:
                 self.logger.error(f"Invalid response format from server: {response_data}")
                 return []
 
-            return response_data["actions"]
+            # Log how many actions were received
+            actions = response_data["actions"]
+            self.logger.info(f"Received {len(actions)} actions from server")
+            
+            # Check if this is a single action strategy response
+            if response_data.get("strategy_type") in ["single_action", "dspy_single_action"]:
+                self.logger.info("Single action strategy detected from server metadata")
+                # Mark each action with metadata indicating it's from a single action strategy
+                for action in actions:
+                    if "meta" not in action:
+                        action["meta"] = {}
+                    action["meta"]["strategy_type"] = response_data.get("strategy_type")
+                
+                # If more than one action is returned despite a single action strategy,
+                # only return the first action with a warning
+                if len(actions) > 1:
+                    self.logger.warning("Single action strategy returned multiple actions. Using only the first one.")
+                    return [actions[0]]
+
+            return actions
 
         except requests.RequestException as e:
             self.logger.error(f"Failed to communicate with server: {e}")
@@ -157,12 +218,12 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
         target = action.get("target", "")
         params = action.get("params", {})
         coordinates = action.get("coordinates", None)
+        explanation = action.get("explanation", "")
         
-        print(f"*** action={action}")
-        print(f"action_type={action_type}")    
-        print(f"target={target}")  
-        print(f"params={params}")
-        print(f"coordinates={coordinates}")
+        # Update explanation metadata with action ID if present
+        action_id = action.get("action_id", None)
+        if action_id:
+            explanation = f"[Action ID: {action_id}] {explanation}"
 
         # Extract coordinates directly from the action if available
         x, y = None, None
@@ -176,12 +237,12 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
                 x, y = int(parts[0]), int(parts[1])
         
         try:
-            # For key events, não precisamos de coordenadas
+            # For key events, we don't need coordinates
             if action_type == "key_event":
                 key_name = params.get("name", "BACK")
                 return KeyEvent(name=key_name)
                 
-            # Se temos coordenadas, usá-las diretamente
+            # If we have coordinates, use them directly
             if x is not None and y is not None:
                 if action_type == "click":
                     return TouchEvent(x=x, y=y)
@@ -194,7 +255,7 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
                     text = params.get("text", "")
                     return SetTextEvent(x=x, y=y, text=text)
             
-            # Se temos um resource ID (mas sem coordenadas), buscar a view
+            # If we have a resource ID (but no coordinates), search for the view
             elif ":" in target and not target.isdigit():
                 # Look up the view in the current state
                 current_state = self.device.get_current_state()
@@ -212,7 +273,7 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
                         text = params.get("text", "")
                         return SetTextEvent(view=view, text=text)
                 else:
-                    # Se a view não foi encontrada, usar centro da tela (último recurso)
+                    # If view not found, use center of screen (last resort)
                     self.logger.warning(f"View with resource_id {target} not found, using center of screen")
                     screen_width = self.device.get_width()
                     screen_height = self.device.get_height()
@@ -227,7 +288,7 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
                         direction = action_type.replace("scroll_", "") if "_" in action_type else params.get("direction", "DOWN")
                         return ScrollEvent(x=center_x, y=center_y, direction=direction.upper())
             
-            # Último recurso: usar centro da tela
+            # Last resort: use center of screen
             else:
                 self.logger.warning(f"No coordinates or valid target for {action_type}, using center of screen")
                 screen_width = self.device.get_width()
@@ -246,7 +307,7 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
                     text = params.get("text", "")
                     return SetTextEvent(x=center_x, y=center_y, text=text)
                     
-            # Se nada funcionou
+            # If nothing worked
             self.logger.warning(f"Could not create event for action: {action}")
             return KeyEvent(name="BACK")
         except Exception as e:
@@ -277,6 +338,37 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
                     
         return None
     
+    def _get_action_description(self, action):
+        """
+        Create a descriptive string for an action to store in the history
+        :param action: The action to describe
+        :return: String description of the action
+        """
+        action_type = action.get("action_type", "unknown")
+        target = action.get("target", "")
+        action_id = action.get("action_id", "")
+        explanation = action.get("explanation", "")
+        
+        # Include action_id if available
+        action_id_str = f" (ID: {action_id})" if action_id else ""
+        
+        # Generate a description based on the action type and target
+        if action_type == "click":
+            return f"CLICK{action_id_str} on {target} - {explanation}"
+        elif action_type == "long_click":
+            return f"LONG_CLICK{action_id_str} on {target} - {explanation}"
+        elif "scroll" in action_type:
+            direction = action_type.replace("scroll_", "").upper() if "_" in action_type else "DOWN"
+            return f"SCROLL {direction}{action_id_str} on {target} - {explanation}"
+        elif action_type == "set_text":
+            text = action.get("params", {}).get("text", "")
+            return f"SET_TEXT{action_id_str} '{text}' on {target} - {explanation}"
+        elif action_type == "key_event":
+            key_name = action.get("params", {}).get("name", "BACK")
+            return f"KEY {key_name}{action_id_str} - {explanation}"
+        else:
+            return f"{action_type.upper()}{action_id_str} on {target} - {explanation}"
+    
     def _update_action_history(self, action_desc):
         """
         Update the action history with a new action description
@@ -296,7 +388,6 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
         # Get the currently focused package
         current_state = self.device.get_current_state()
         current_package = current_state.foreground_activity.split('/')[0] if current_state.foreground_activity else None    
-        # current_package = self.device.adb.shell("dumpsys window windows | grep -E 'mCurrentFocus' | cut -d'/' -f1 | cut -d' ' -f6").strip()
         # Check if it's the target application
         if current_package != target_package:
             self.logger.warning(f"Target app not in foreground. Current: {current_package}, Expected: {target_package}")
@@ -304,3 +395,50 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
             self.device.start_app(self.app)
             time.sleep(2)  # Wait for initialization            
                 
+    def track_screen_transition(self, from_state, to_state, action):
+        """
+        Track screen transitions to build a dynamic transition graph
+        :param from_state: Source state
+        :param to_state: Target state after action
+        :param action: Action that caused the transition
+        """
+        # Initialize dynamic transition tracker if not exists
+        if not hasattr(self, 'dynamic_transition_tracker'):
+            # We'll use a simple dictionary to track transitions
+            self.dynamic_transition_tracker = {
+                "activities": {},
+                "transitions": []
+            }
+            
+        # Record screen transition
+        if from_state and to_state:
+            from_activity = from_state.foreground_activity
+            to_activity = to_state.foreground_activity
+            
+            # Skip if same activity (no transition)
+            if from_activity == to_activity:
+                return
+                
+            # Record transition
+            transition = {
+                "from": from_activity,
+                "to": to_activity,
+                "action": self._get_action_description(action) if isinstance(action, dict) else str(action),
+                "timestamp": time.time()
+            }
+            
+            self.dynamic_transition_tracker["transitions"].append(transition)
+            
+            # Update activity visit counts
+            if to_activity not in self.dynamic_transition_tracker["activities"]:
+                self.dynamic_transition_tracker["activities"][to_activity] = {
+                    "visit_count": 0,
+                    "first_visit": time.time(),
+                    "tested_elements": []
+                }
+            
+            self.dynamic_transition_tracker["activities"][to_activity]["visit_count"] += 1
+            self.dynamic_transition_tracker["activities"][to_activity]["last_visit"] = time.time()
+            
+            self.logger.info(f"Tracked transition: {from_activity} -> {to_activity}")
+            

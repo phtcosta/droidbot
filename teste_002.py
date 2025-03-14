@@ -5,6 +5,7 @@ from droidbot.app import App
 from droidbot.device_state import DeviceState
 import os
 
+from droidbot.input_event import CompoundEvent
 from droidbot.rvandroid_policy import RVAndroidPolicy
 
 HOST = "http://localhost:11434"
@@ -36,10 +37,9 @@ def execute(app_path, output_dir=None):
             
             event = policy.generate_event()
             print(f"Generated event: {event}")
-            event.send(device)
             
             # Send the event using device.send_event which works with all event types
-            # device.send_event(event)
+            device.send_event(event)
             
             # Optional: Take a screenshot after execution
             # img_path = device.take_screenshot()
