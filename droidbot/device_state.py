@@ -2,6 +2,8 @@ import copy
 import math
 import os
 
+# from droidbot.input_event import LongTouchEvent, ScrollEvent, SetTextEvent, TouchEvent
+
 
 from .utils import md5
 # from .input_event import TouchEvent, LongTouchEvent, ScrollEvent, SetTextEvent, KeyEvent
@@ -422,11 +424,13 @@ class DeviceState(object):
             depth += 1
         return -1
 
-    def get_possible_input(self):
+    def get_possible_input(self):        
         """
         Get a list of possible input events for this state
         :return: list of InputEvent
         """
+        from droidbot.input_event import LongTouchEvent, ScrollEvent, SetTextEvent, TouchEvent  
+
         if self.possible_events:
             return [] + self.possible_events
         possible_events = []
