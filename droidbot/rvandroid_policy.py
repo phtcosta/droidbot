@@ -144,6 +144,8 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
         # Convert state to dictionary representation
         state_dict = state.to_dict()
 
+        state_dict["package_name"] = state.view_tree.get("package", "")
+
         # Add action history
         state_dict["action_history"] = self.action_history[-20:] if self.action_history else []
         

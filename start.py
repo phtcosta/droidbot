@@ -36,6 +36,7 @@ def parse_args():
                              '  \"%s\" -- Explore UI using a greedy depth-first strategy;\n'
                              '  \"%s\" -- Explore UI using a naive breadth-first strategy;\n'
                              '  \"%s\" -- Explore UI using a greedy breadth-first strategy;\n'
+                             '  \"%s\" -- Use RV-Android server to guide testing;\n'
                              %
                              (
                                  input_policy.POLICY_NONE,
@@ -181,3 +182,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
