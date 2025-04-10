@@ -4,19 +4,37 @@ from droidbot.device import Device
 from droidbot.app import App
 from droidbot.device_state import DeviceState
 import os
+import argparse
 
 from droidbot.input_event import CompoundEvent
 from droidbot.rvandroid_policy import RVAndroidPolicy
 
 HOST = "http://localhost:11434"
 MODEL = "llama3.2:1b"
+DEFAULT_SERVER_URL = "http://localhost:5000/api/get_actions"
+
+# Parse command line arguments to enable selecting the strategy
+def parse_args():
+    parser = argparse.ArgumentParser(description='Test DroidBot with RVAndroid policy')
+    parser.add_argument('--batch', action='store_true', help='Use batch action strategy')
+    parser.add_argument('--server-url', default=DEFAULT_SERVER_URL, help='RVAndroid server URL')
+    return parser.parse_args()
 
 
-def execute(app_path, output_dir=None):
+def execute(app_path, output_dir=None, use_batch_strategy=True, server_url=DEFAULT_SERVER_URL):
     device = create_device()
     app = App(app_path, output_dir=output_dir)
 
-    policy = RVAndroidPolicy(device, app, True)
+    # Initialize policy with the specified server URL
+    policy = RVAndroidPolicy(device, app, True, server_url=server_url)
+    
+    # Log strategy mode
+    if use_batch_strategy:
+        print("*" * 50)
+        print("USING BATCH ACTION STRATEGY")
+        print("*" * 50)
+    else:
+        print("Using single action strategy")
 
     cont = 1
     try:
@@ -38,8 +56,20 @@ def execute(app_path, output_dir=None):
             event = policy.generate_event()
             print(f"Generated event: {event}")
             
-            # Send the event using device.send_event which works with all event types
-            device.send_event(event)
+            # Handle compound events for batch actions differently
+            if isinstance(event, CompoundEvent):
+                print(f"Executing batch of {len(event.events)} actions")
+                
+                # Execute each event in the compound event
+                for i, sub_event in enumerate(event.events):
+                    print(f"  Executing batch action {i+1}/{len(event.events)}: {sub_event}")
+                    device.send_event(sub_event)
+                    # Brief pause between batch actions for visibility
+                    import time
+                    time.sleep(1)
+            else:
+                # Send the event using device.send_event which works with all event types
+                device.send_event(event)
             
             # Optional: Take a screenshot after execution
             # img_path = device.take_screenshot()
@@ -100,4 +130,13 @@ if __name__ == "__main__":
     base_dir = "/home/pedro/desenvolvimento/workspaces/workspaces-doutorado/workspace-rv/rvsec/rv-android/out"
     out_dir = "/home/pedro/tmp/screenshots"
     apk = "{}/cryptoapp.apk".format(base_dir)
-    execute(apk, out_dir)
+    
+    # Parse command line arguments
+    args = parse_args()
+    
+    # Before running DroidBot, make sure the RVAndroid server is running with:
+    # - For single action: python teste_run_server.py --strategy single_action
+    # - For batch action: python teste_run_server.py --strategy flow_based_batch_action
+    
+    # Run DroidBot with the appropriate strategy
+    execute(apk, out_dir, use_batch_strategy=args.batch, server_url=args.server_url)

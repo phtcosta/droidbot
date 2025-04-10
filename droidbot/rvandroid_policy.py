@@ -19,11 +19,20 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
     """
     A DroidBot input policy that communicates with RV-Android server
     to get next actions based on current app state.
+    
+    Features:
+    - Supports both single action and batch action strategies
+    - Validates and optimizes batch action sequences for UI patterns
+    - Reports batch execution results back to the server
+    - Tracks batch execution statistics for performance monitoring
+    - Handles UI pattern-specific optimizations (forms, lists, etc.)
+    - Provides error recovery and reporting for batch actions
+    - Maintains compatibility with existing single-action workflows
     """
 
     def __init__(self, device: Device, app: App, random_input, server_url="http://localhost:5000/api/get_actions"):
         super(RVAndroidPolicy, self).__init__(device, app, random_input)
-        print("****************************************** RVAndroidPolicy")
+        print("****************************************** RVAndroidPolicy (with Batch Support)")
         self.logger = logging.getLogger('RVAndroidPolicy')
         self.server_url = server_url
         self.fallback_policy = UtgGreedySearchPolicy(device, app, random_input, POLICY_GREEDY_DFS)
@@ -32,10 +41,22 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
         self.consecutive_errors = 0
         self.max_consecutive_errors = 3
         
+        # Initialize batch action tracking
+        self.pending_batch_reports = []
+        self.batch_execution_stats = {
+            "total_batches": 0,
+            "successful_batches": 0,
+            "failed_batches": 0,
+            "total_batch_actions": 0,
+            "successful_batch_actions": 0,
+            "patterns": {}
+        }
+        
         # Enable show touches for better visualization
         self.device.adb.shell("settings put system show_touches 1")
 
         self.logger.info(f"RVAndroidPolicy initialized with server: {server_url}")
+        self.logger.info("Batch action support enabled")
 
     def generate_event(self):
         """
@@ -57,28 +78,66 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
             if actions and len(actions) > 0:
                 self.consecutive_errors = 0
                 
-                # Check if there's a metadata flag indicating this is a single action strategy
-                is_single_action = self._check_if_single_action_strategy(actions)
+                # Determine if this is a batch operation or single action
+                is_batch_operation = not self._check_if_single_action_strategy(actions)
                 
-                # If single action strategy is detected, only use the first action
-                if is_single_action and len(actions) > 1:
+                # For batch operations with multiple actions, create a CompoundEvent
+                if is_batch_operation and len(actions) > 1:
+                    self.logger.info(f"Batch operation detected with {len(actions)} actions")
+                    print(f"*** EXECUTING BATCH OPERATION: {len(actions)} ACTIONS ***")
+                
+                # If single action strategy is detected but multiple actions were received
+                elif not is_batch_operation and len(actions) > 1:
                     self.logger.info(f"Single action strategy detected but received {len(actions)} actions. Using only the first action.")
                     actions = [actions[0]]
                 
-                # If there are multiple actions and not a single action strategy, create a CompoundEvent
+                # Process multiple actions as batch if not marked as single action
                 if len(actions) > 1:
                     self.logger.info(f"Creating CompoundEvent with {len(actions)} actions")
                     events = []
-                    for action in actions:
+                    
+                    # Store batch metadata for reporting results back to the server
+                    batch_metadata = self._extract_batch_metadata(actions)
+                    self.logger.info(f"Batch metadata: {batch_metadata}")
+                    
+                    # Validate batch action sequence for coherence
+                    validated_actions = self._validate_batch_actions(actions)
+                    if not validated_actions:
+                        self.logger.warning("Batch action validation failed, using fallback policy")
+                        return self.fallback_policy.generate_event()
+                        
+                    # Process validated actions
+                    for action in validated_actions:
                         try:
+                            # Add batch execution context to each action
+                            if "meta" not in action:
+                                action["meta"] = {}
+                            action["meta"]["batch_execution"] = True
+                            action["meta"]["batch_id"] = batch_metadata.get("batch_id", "unknown")
+                            
                             event = self._convert_to_droidbot_event(action)
                             events.append(event)
                             # Update history for each action within compound event
                             self._update_action_history(self._get_action_description(action))
                         except Exception as e:
                             self.logger.error(f"Error converting action to event: {e}")
+                            
+                            # For batch actions, report the error but continue with the rest
+                            if not self._report_batch_action_error(action, e, batch_metadata):
+                                self.logger.warning("Failed to report batch action error to server")
                     
-                    return CompoundEvent(events=events)
+                    # Check if we have any events after filtering
+                    if not events:
+                        self.logger.warning("No valid events created from batch actions, using fallback policy")
+                        return self.fallback_policy.generate_event()
+                    
+                    # Create compound event with all the validated events
+                    compound_event = CompoundEvent(events=events)
+                    
+                    # Schedule batch result reporting after execution
+                    self._schedule_batch_result_reporting(batch_metadata, len(events))
+                    
+                    return compound_event
                 else:
                     # Handle single action case
                     action = actions[0]
@@ -114,14 +173,48 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
         :param actions: List of actions from RV-Android
         :return: True if single action strategy is detected, False otherwise
         """
-        # Check if any action has metadata indicating single action strategy
+        # IMPROVED DETECTION LOGIC:
+        
+        # FAST PATH: If only one action is provided, it's treated as a single action
+        if len(actions) == 1:
+            return True
+            
+        # FAST PATH: If multiple actions, treat as batch by default unless explicitly marked as single
+        if len(actions) > 1:
+            # Only consider it a single action strategy if explicitly marked as such
+            single_action_count = 0
+            batch_action_count = 0
+            
+            for action in actions:
+                meta = action.get("meta", {})
+                # Check for explicit batch indicators
+                if (meta.get("strategy_type") in ["batch_action", "flow_based_batch", "flow_based_batch_action"] or
+                    meta.get("is_batch_part", False) or
+                    "batch_id" in meta):
+                    batch_action_count += 1
+                    print("*** BATCH ACTION INDICATOR FOUND IN ACTION METADATA ***")
+                
+                # Check for explicit single action indicators
+                elif (meta.get("strategy_type") in ["single_action", "dspy_single_action"] or
+                      action.get("single_action_mode", False)):
+                    single_action_count += 1
+            
+            # If any actions have batch indicators, treat as batch
+            if batch_action_count > 0:
+                return False
+                
+            # If ALL actions have single action indicators, treat as single
+            if single_action_count == len(actions):
+                return True
+                
+            # Otherwise, treat multiple actions as a batch by default
+            print(f"*** TREATING {len(actions)} ACTIONS AS BATCH BY DEFAULT ***")
+            return False
+            
+        # Detailed check for single actions (usually won't reach here with improved logic)
         for action in actions:
             meta = action.get("meta", {})
             if meta.get("strategy_type") in ["single_action", "dspy_single_action"]:
-                return True
-                
-            # Also check for other indicators that might be present
-            if action.get("single_action_mode", False):
                 return True
                 
             # Check if the explanation mentions single action mode
@@ -129,11 +222,8 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
             if "single action" in explanation or "single_action" in explanation:
                 return True
         
-        # Check if there's only one action and it has a strong indicator it's meant to be alone
-        if len(actions) == 1 and actions[0].get("solo_action", False):
-            return True
-            
-        return False
+        # Default to single action for unspecified cases
+        return True
 
     def _prepare_state_data(self, state):
         """
@@ -155,12 +245,345 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
 
         return state_dict
 
+    def _extract_batch_metadata(self, actions):
+        """
+        Extract metadata from a batch of actions to track their execution
+        
+        :param actions: List of actions from the batch
+        :return: Dictionary with batch metadata
+        """
+        # Create a unique batch ID if not present
+        batch_id = None
+        batch_type = None
+        batch_pattern = None
+        batch_confidence = None
+        
+        # Try to find batch metadata in any of the actions
+        for action in actions:
+            meta = action.get("meta", {})
+            
+            # Use the first batch_id found
+            if not batch_id and meta.get("batch_id"):
+                batch_id = meta.get("batch_id")
+                
+            # Use the first strategy_type found
+            if not batch_type and meta.get("strategy_type"):
+                batch_type = meta.get("strategy_type")
+                
+            # Use the first pattern_type found
+            if not batch_pattern and meta.get("pattern_type"):
+                batch_pattern = meta.get("pattern_type")
+                
+            # Use the first pattern_confidence found
+            if batch_confidence is None and "pattern_confidence" in meta:
+                batch_confidence = meta.get("pattern_confidence")
+            
+            # If we found all metadata, we can stop searching
+            if batch_id and batch_type and batch_pattern and batch_confidence is not None:
+                break
+                
+        # Generate a batch_id if none was found
+        if not batch_id:
+            import uuid
+            batch_id = f"batch_{uuid.uuid4().hex[:8]}"
+            
+        # Determine batch type if none was found
+        if not batch_type:
+            batch_type = "flow_based_batch" if len(actions) > 1 else "single_action"
+            
+        result = {
+            "batch_id": batch_id,
+            "strategy_type": batch_type,
+            "action_count": len(actions),
+            "timestamp": time.time(),
+        }
+        
+        # Add pattern information if available
+        if batch_pattern:
+            result["pattern_type"] = batch_pattern
+            
+        if batch_confidence is not None:
+            result["pattern_confidence"] = batch_confidence
+            
+        return result
+
+    def _validate_batch_actions(self, actions):
+        """
+        Validate a sequence of batch actions for coherence and feasibility
+        
+        :param actions: List of actions to validate
+        :return: List of validated actions (possibly filtered or reordered)
+        """
+        if not actions:
+            return []
+            
+        # Filter out actions with obvious issues
+        validated_actions = []
+        for i, action in enumerate(actions):
+            action_type = action.get("action_type", "").lower()
+            
+            # Basic validation - must have an action_type
+            if not action_type:
+                self.logger.warning(f"Action at index {i} has no action_type, skipping")
+                continue
+                
+            # Action type must be one of the supported types
+            if action_type not in ["click", "long_click", "scroll_up", "scroll_down", 
+                                 "scroll_left", "scroll_right", "scroll", "set_text", "key_event"]:
+                self.logger.warning(f"Action at index {i} has unsupported action_type: {action_type}, skipping")
+                continue
+                
+            # Additional validation for text input actions
+            if action_type == "set_text":
+                params = action.get("params", {})
+                if "text" not in params:
+                    self.logger.warning(f"Set text action at index {i} has no text parameter, skipping")
+                    continue
+                    
+            # Add action index metadata for tracking
+            if "meta" not in action:
+                action["meta"] = {}
+            action["meta"]["batch_index"] = i
+            
+            validated_actions.append(action)
+            
+        # Ensure the actions are in a sensible order (e.g., click before set_text)
+        # This is a simple heuristic and might need to be expanded based on UI patterns
+        ordered_actions = self._order_batch_actions(validated_actions)
+        
+        return ordered_actions
+        
+    def _order_batch_actions(self, actions):
+        """
+        Order batch actions to ensure they execute in a logical sequence
+        
+        :param actions: List of actions to order
+        :return: Ordered list of actions
+        """
+        # For form patterns, typically we want:
+        # 1. Set text fields first
+        # 2. Then handle click actions like checkboxes
+        # 3. Finally click submit/next buttons
+        
+        # Extract pattern type if available
+        pattern_type = None
+        for action in actions:
+            meta = action.get("meta", {})
+            if meta.get("pattern_type"):
+                pattern_type = meta.get("pattern_type")
+                break
+                
+        # Order based on pattern type
+        if pattern_type == "form":
+            # For forms, order: set_text, clicks, then submit button
+            clicks = []
+            set_texts = []
+            submit_actions = []
+            other_actions = []
+            
+            for action in actions:
+                action_type = action.get("action_type", "").lower()
+                explanation = action.get("explanation", "").lower()
+                
+                # Check if this is likely a submit button
+                is_submit = any(keyword in explanation for keyword in 
+                             ["submit", "login", "register", "next", "continue", "send", "save"])
+                
+                if action_type == "set_text":
+                    set_texts.append(action)
+                elif action_type == "click" and is_submit:
+                    submit_actions.append(action)
+                elif action_type == "click":
+                    clicks.append(action)
+                else:
+                    other_actions.append(action)
+                    
+            return set_texts + clicks + other_actions + submit_actions
+        
+        elif pattern_type == "list":
+            # For lists, keep the original order but ensure scrolls come after clicks
+            clicks = []
+            scrolls = []
+            other_actions = []
+            
+            for action in actions:
+                action_type = action.get("action_type", "").lower()
+                
+                if action_type == "click" or action_type == "long_click":
+                    clicks.append(action)
+                elif "scroll" in action_type:
+                    scrolls.append(action)
+                else:
+                    other_actions.append(action)
+                    
+            return clicks + other_actions + scrolls
+            
+        # Default: preserve the original order
+        return actions
+    
+    def _report_batch_action_error(self, action, error, batch_metadata):
+        """
+        Report an error with a batch action to the server
+        
+        :param action: The action that caused an error
+        :param error: The error information
+        :param batch_metadata: Batch metadata for context
+        :return: True if successfully reported, False otherwise
+        """
+        try:
+            error_url = self.server_url.replace("get_actions", "report_batch_error")
+            
+            # Prepare error report
+            error_report = {
+                "batch_id": batch_metadata.get("batch_id", "unknown"),
+                "action_index": action.get("meta", {}).get("batch_index", -1),
+                "action": action,
+                "error_message": str(error),
+                "error_type": error.__class__.__name__,
+                "timestamp": time.time()
+            }
+            
+            # Send error report to server
+            response = requests.post(
+                error_url,
+                json=error_report,
+                headers={"Content-Type": "application/json"},
+                timeout=5
+            )
+            
+            if response.status_code != 200:
+                self.logger.warning(f"Error reporting failed with status {response.status_code}: {response.text}")
+                return False
+                
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to report batch action error: {e}")
+            return False
+    
+    def _schedule_batch_result_reporting(self, batch_metadata, executed_count):
+        """
+        Schedule reporting of batch execution results back to the server
+        
+        :param batch_metadata: Metadata about the batch
+        :param executed_count: How many actions were successfully executed
+        """
+        batch_id = batch_metadata.get("batch_id")
+        total_actions = batch_metadata.get("action_count", 0)
+        strategy_type = batch_metadata.get("strategy_type", "unknown")
+        pattern_type = batch_metadata.get("pattern_type", "unknown")
+        
+        # Store the batch information for reporting after execution
+        if not hasattr(self, 'pending_batch_reports'):
+            self.pending_batch_reports = []
+            
+        report = {
+            "batch_id": batch_id,
+            "total_actions": total_actions,
+            "executed_actions": executed_count,
+            "strategy_type": strategy_type,
+            "pattern_type": pattern_type,
+            "pending_report": True,
+            "scheduled_time": time.time() + 1,  # Report after 1 second to allow execution
+            "success_rate": executed_count / total_actions if total_actions > 0 else 0
+        }
+        
+        self.pending_batch_reports.append(report)
+        
+        # Update batch execution statistics
+        self.batch_execution_stats["total_batches"] += 1
+        self.batch_execution_stats["total_batch_actions"] += total_actions
+        self.batch_execution_stats["successful_batch_actions"] += executed_count
+        
+        if executed_count == total_actions:
+            self.batch_execution_stats["successful_batches"] += 1
+        else:
+            self.batch_execution_stats["failed_batches"] += 1
+            
+        # Track pattern-specific statistics
+        if pattern_type != "unknown":
+            if pattern_type not in self.batch_execution_stats["patterns"]:
+                self.batch_execution_stats["patterns"][pattern_type] = {
+                    "total_batches": 0,
+                    "successful_batches": 0, 
+                    "total_actions": 0,
+                    "successful_actions": 0
+                }
+                
+            self.batch_execution_stats["patterns"][pattern_type]["total_batches"] += 1
+            self.batch_execution_stats["patterns"][pattern_type]["total_actions"] += total_actions
+            self.batch_execution_stats["patterns"][pattern_type]["successful_actions"] += executed_count
+            
+            if executed_count == total_actions:
+                self.batch_execution_stats["patterns"][pattern_type]["successful_batches"] += 1
+        
+        # Log batch statistics
+        self.logger.info(f"Batch execution scheduled for reporting: {batch_id}, {executed_count}/{total_actions} actions executed")
+        
+        # Add statistics to the report
+        report["batch_stats"] = {
+            "total_batches_executed": self.batch_execution_stats["total_batches"],
+            "batch_success_rate": self.batch_execution_stats["successful_batches"] / self.batch_execution_stats["total_batches"] 
+                                 if self.batch_execution_stats["total_batches"] > 0 else 0,
+            "action_success_rate": self.batch_execution_stats["successful_batch_actions"] / self.batch_execution_stats["total_batch_actions"]
+                                  if self.batch_execution_stats["total_batch_actions"] > 0 else 0
+        }
+        
+    def _process_pending_batch_reports(self):
+        """
+        Process any pending batch result reports
+        """
+        if not hasattr(self, 'pending_batch_reports'):
+            return
+            
+        current_time = time.time()
+        reports_to_send = []
+        remaining_reports = []
+        
+        # Find reports that are ready to send
+        for report in self.pending_batch_reports:
+            if current_time >= report.get("scheduled_time", 0):
+                reports_to_send.append(report)
+            else:
+                remaining_reports.append(report)
+                
+        # Update the pending reports list
+        self.pending_batch_reports = remaining_reports
+        
+        # Send reports to the server
+        for report in reports_to_send:
+            try:
+                report_url = self.server_url.replace("get_actions", "report_batch_result")
+                
+                # Add current state information
+                current_state = self.device.get_current_state()
+                report["current_state"] = {
+                    "activity": current_state.foreground_activity,
+                    "view_count": len(current_state.views) if current_state.views else 0,
+                    "timestamp": time.time()
+                }
+                
+                # Send report to server
+                response = requests.post(
+                    report_url,
+                    json=report,
+                    headers={"Content-Type": "application/json"},
+                    timeout=5
+                )
+                
+                if response.status_code != 200:
+                    self.logger.warning(f"Batch result reporting failed with status {response.status_code}: {response.text}")
+            except Exception as e:
+                self.logger.error(f"Failed to report batch result: {e}")
+
     def _get_actions_from_server(self, state_data, timeout=30):
         """
         Send state data to RV-Android server and get suggested actions
         :param state_data: State data for RV-Android
         :return: List of actions from RV-Android
         """
+        # First process any pending batch reports
+        self._process_pending_batch_reports()
+        
         try:
             self.logger.info(f"Sending state to server: {self.server_url}")
             response = requests.post(
@@ -184,21 +607,78 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
             actions = response_data["actions"]
             self.logger.info(f"Received {len(actions)} actions from server")
             
-            # Check if this is a single action strategy response
-            if response_data.get("strategy_type") in ["single_action", "dspy_single_action"]:
-                self.logger.info("Single action strategy detected from server metadata")
-                # Mark each action with metadata indicating it's from a single action strategy
+            # Extract and add strategy metadata to all actions
+            strategy_type = response_data.get("strategy_type")
+            pattern_type = response_data.get("pattern_type")
+            batch_id = response_data.get("batch_id")
+            
+            # Print metadata for debugging
+            print(f"Response metadata: strategy_type={strategy_type}, pattern_type={pattern_type}, batch_id={batch_id}")
+            if len(actions) > 1:
+                print(f"Multiple actions received ({len(actions)}) - potential batch operation")
+            
+            if strategy_type:
                 for action in actions:
                     if "meta" not in action:
                         action["meta"] = {}
-                    action["meta"]["strategy_type"] = response_data.get("strategy_type")
+                    action["meta"]["strategy_type"] = strategy_type
+                    
+                    # Also add pattern info if available
+                    if pattern_type:
+                        action["meta"]["pattern_type"] = pattern_type
+                        
+                    # Add batch ID if available
+                    if batch_id:
+                        action["meta"]["batch_id"] = batch_id
+            
+            # IMPROVED BATCH DETECTION:
+            # We will determine if this is a batch operation based on:
+            # 1. The number of actions received
+            # 2. Available metadata
+            
+            # Consider it a batch operation if ANY of these conditions are true:
+            # - 2 or more actions are returned AND strategy_type doesn't explicitly indicate single action
+            # - batch_id is present in the response
+            # - pattern_type is present in the response
+            
+            is_batch_operation = (
+                (len(actions) > 1 and strategy_type not in ["single_action", "dspy_single_action"]) or
+                batch_id is not None or
+                pattern_type is not None
+            )
+            
+            # If we detect a batch operation, make sure all actions are properly marked
+            if is_batch_operation:
+                self.logger.info(f"Batch operation detected: {len(actions)} actions")
+                print(f"*** BATCH OPERATION DETECTED: {len(actions)} actions ***")
                 
-                # If more than one action is returned despite a single action strategy,
+                # Mark all actions as part of a batch
+                for action in actions:
+                    if "meta" not in action:
+                        action["meta"] = {}
+                    # Force the strategy_type to indicate batch
+                    action["meta"]["strategy_type"] = "flow_based_batch_action"
+                    action["meta"]["is_batch_part"] = True
+                    # Add batch_id if not already present
+                    if not action["meta"].get("batch_id") and batch_id:
+                        action["meta"]["batch_id"] = batch_id
+                
+                return actions
+                
+            # For single action cases
+            elif strategy_type in ["single_action", "dspy_single_action"] or len(actions) == 1:
+                self.logger.info("Single action case detected")
+                
+                # If multiple actions were returned with a single action strategy,
                 # only return the first action with a warning
                 if len(actions) > 1:
                     self.logger.warning("Single action strategy returned multiple actions. Using only the first one.")
+                    print("WARNING: Single action strategy returned multiple actions, ignoring all but the first.")
                     return [actions[0]]
-
+                    
+                return actions
+            
+            # Default case (if we can't determine definitively)
             return actions
 
         except requests.RequestException as e:
