@@ -30,7 +30,7 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
     - Maintains compatibility with existing single-action workflows
     """
 
-    def __init__(self, device: Device, app: App, random_input, server_url="http://localhost:5000/api/get_actions"):
+    def __init__(self, device: Device, app: App, random_input, server_url="http://localhost:5000"):
         super(RVAndroidPolicy, self).__init__(device, app, random_input)
         print("****************************************** RVAndroidPolicy (with Batch Support)")
         self.logger = logging.getLogger('RVAndroidPolicy')
@@ -587,7 +587,7 @@ class RVAndroidPolicy(UtgBasedInputPolicy):
         try:
             self.logger.info(f"Sending state to server: {self.server_url}")
             response = requests.post(
-                self.server_url,
+                self.server_url+"/api/get_actions",
                 json=state_data,
                 headers={"Content-Type": "application/json"},
                 timeout=timeout

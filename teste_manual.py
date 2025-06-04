@@ -26,63 +26,22 @@ def execute(app_path, output_dir=None, use_batch_strategy=True, server_url=DEFAU
     device = create_device()
     app = App(app_path, output_dir=output_dir)
 
-    # Initialize policy with the specified server URL
     policy = RVAndroidPolicy(device, app, True, server_url=server_url)
-    
-    # Log strategy mode
-    if use_batch_strategy:
-        print("*" * 50)
-        print("USING BATCH ACTION STRATEGY")
-        print("*" * 50)
-    else:
-        print("Using single action strategy")
 
-    cont = 1
     try:
         device.set_up()
         device.connect()
-        
-        # Enable show touches for better visualization
-        device.adb.shell("settings put system show_touches 1")
-        print("Show touches enabled")
         
         device.install_app(app)
         device.start_app(app)
         while (True):
             input("Press ENTER to continue...")
-            state = device.get_current_state()
-            print(f"state_str={state.state_str}")
-            print(f"structure_str={state.structure_str}")
+            state = device.get_current_state()            
+            print(f"structure_str={state.structure_str}") # estrutura da tela
+            print(f"state_str={state.state_str}") # estrutura da tela com os dados
             
             event = policy.generate_event()
-            print(f"Generated event: {event}")
-            
-            # Handle compound events for batch actions differently
-            if isinstance(event, CompoundEvent):
-                print(f"Executing batch of {len(event.events)} actions")
-                
-                # Execute each event in the compound event
-                for i, sub_event in enumerate(event.events):
-                    print(f"  Executing batch action {i+1}/{len(event.events)}: {sub_event}")
-                    device.send_event(sub_event)
-                    # Brief pause between batch actions for visibility
-                    import time
-                    time.sleep(1)
-            else:
-                # Send the event using device.send_event which works with all event types
-                device.send_event(event)
-            
-            # Optional: Take a screenshot after execution
-            # img_path = device.take_screenshot()
-            # if img_path:
-            #     print(f"Screenshot saved at: {img_path}")
-            
-            # Optional: Save state information for debugging
-            # prefix = f"{cont:03}"
-            # cont += 1
-            # state_file = os.path.join(output_dir, prefix + ".state")
-            # with open(state_file, "w") as arquivo:
-            #     json.dump(create_message(state), arquivo, indent=3)
+            print(f"Generated event: {event}")                        
             
     except KeyboardInterrupt:
         print("Keyboard interrupt received, stopping execution.")
